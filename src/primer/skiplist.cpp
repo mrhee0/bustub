@@ -18,21 +18,18 @@
 #include <string>
 #include <vector>
 #include "common/macros.h"
-#include "fmt/core.h"
-#include <fmt/core.h>
-#include <fmt/format.h>
 
 namespace bustub {
 
 /** @brief Checks whether the container is empty. */
 SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Empty() -> bool {
-  return header_==nullptr || header_->links_[0]==nullptr;
+  return header_ == nullptr || header_->links_[0] == nullptr;
 }
 
 /** @brief Returns the number of elements in the skip list. */
 SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Size() -> size_t {
   int listSize = 0;
-  for (auto i = header_->links_[0]; i!=nullptr; i=i->links_[0]) {
+  for (auto i = header_->links_[0]; i != nullptr; i = i->links_[0]) {
     listSize++;
   }
   return listSize;
@@ -62,9 +59,7 @@ SKIPLIST_TEMPLATE_ARGUMENTS void SkipList<K, Compare, MaxHeight, Seed>::Drop() {
  *
  * Note: You might want to use the provided `Drop` helper function.
  */
-SKIPLIST_TEMPLATE_ARGUMENTS void SkipList<K, Compare, MaxHeight, Seed>::Clear() {
-    Drop();
-}
+SKIPLIST_TEMPLATE_ARGUMENTS void SkipList<K, Compare, MaxHeight, Seed>::Clear() { Drop(); }
 
 /**
  * @brief Inserts a key into the skip list.
@@ -92,24 +87,23 @@ SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Insert(c
  */
 SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Erase(const K &key) -> bool {
   std::unique_lock lock(rwlock_);
-//  fmt::println("Removing key {}", key);
   std::vector<std::shared_ptr<SkipNode>> chain = search(key);
   std::shared_ptr<SkipNode> removedNode = chain[0]->links_[0];
-  if (!removedNode || compare_(removedNode->key_,key) || compare_(key,removedNode->key_)) {
+  if (!removedNode || compare_(removedNode->key_, key) || compare_(key, removedNode->key_)) {
     return false;
   }
   updatePrevs(chain, removedNode);
   size_--;
-  if (removedNode->Height() == height_) {
-    for (auto i = MaxHeight-1; i>=0; i--) {
-      if (chain[i] && chain[i]->links_[i] != nullptr) {
-        height_ = i;
-//        fmt::println("New height {}", height_);
+  if (size_ == 0) {
+    height_ = 1;
+  } else if (removedNode->Height() == height_) {
+    for (int i = MaxHeight - 1; i >= 0; i--) {
+      if (chain[i] && chain[i]->links_[i]) {
+        height_ = i + 1;
         break;
       }
     }
   }
-//  fmt::println("First key {}", header_->links_[0]->key_);
   return true;
 }
 
@@ -124,11 +118,8 @@ SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Contains
   // than the other: `!compare_(a, b) && !compare_(b, a)`.
   std::shared_lock lock(rwlock_);
   std::vector<std::shared_ptr<SkipNode>> chain = search(key);
-  if (chain[0] == nullptr) {
-    return false;
-  }
   auto node = chain[0]->links_[0];
-  return node!=nullptr && !compare_(key,node->key_) && !compare_(node->key_,key);
+  return node != nullptr && !compare_(key, node->key_) && !compare_(node->key_, key);
 }
 
 /**
@@ -139,7 +130,6 @@ SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Contains
 SKIPLIST_TEMPLATE_ARGUMENTS void SkipList<K, Compare, MaxHeight, Seed>::Print() {
   auto node = header_->Next(LOWEST_LEVEL);
   while (node != nullptr) {
-    fmt::println("Node {{ key: {}, height: {} }}", node->Key(), node->Height());
     node = node->Next(LOWEST_LEVEL);
   }
 }
