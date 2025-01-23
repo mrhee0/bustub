@@ -81,7 +81,6 @@ SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Insert(c
   if (!newNode) {
     return false;
   }
-  updatePrevs(chain, newNode);
   return true;
 }
 
@@ -125,6 +124,9 @@ SKIPLIST_TEMPLATE_ARGUMENTS auto SkipList<K, Compare, MaxHeight, Seed>::Contains
   // than the other: `!compare_(a, b) && !compare_(b, a)`.
   std::shared_lock lock(rwlock_);
   std::vector<std::shared_ptr<SkipNode>> chain = search(key);
+  if (chain[0] == nullptr) {
+    return false;
+  }
   auto node = chain[0]->links_[0];
   return node!=nullptr && !compare_(key,node->key_) && !compare_(node->key_,key);
 }

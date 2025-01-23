@@ -113,18 +113,19 @@ class SkipList {
 
     // Create new node
     auto newHeight = RandomHeight();
-    fmt::println("Inserting key {} at height {}", key, newHeight);
+//    fmt::println("Inserting key {} at height {}", key, newHeight);
     auto newNode = std::make_shared<SkipNode>(newHeight, key);
 
     // Update new node pointers
     for (size_t i = 0; i < newHeight && i < height_; i++) {
       newNode->links_[i] = chain[i]->links_[i];
+      chain[i]->links_[i] = newNode;
     }
 
     // Adjust height
     while (height_ < newHeight) {
 //      fmt::println("NEW HEIGHT {}", height_);
-      chain[height_] = header_;
+      header_->links_[height_] = newNode;
       height_++;
     }
     size_++;
