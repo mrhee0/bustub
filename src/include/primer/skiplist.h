@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <shared_mutex>
 #include <vector>
@@ -45,7 +46,7 @@ class SkipList {
 
  public:
   /**  @brief Constructs an empty skip list with an optional custom comparison function. */
-  explicit SkipList(const Compare &compare = Compare{}) : header_{new SkipList::SkipNode(MaxHeight)}, height_{1} {}
+  explicit SkipList(const Compare &compare = Compare{}) : header_{new SkipList::SkipNode(MaxHeight)} {}
 
   /**
    * @brief Destructs the skip list.
@@ -88,7 +89,7 @@ class SkipList {
   // - Adjust height and previous pointers.
 
   // Returns list of previous nodes
-  auto search(const K &key) -> std::vector<std::shared_ptr<SkipNode>> {
+  auto Search(const K &key) -> std::vector<std::shared_ptr<SkipNode>> {
     std::vector<std::shared_ptr<SkipNode>> result(MaxHeight, nullptr);
     auto curr = header_;
     for (int i = static_cast<int>(height_) - 1; i >= 0; i--) {
@@ -101,7 +102,7 @@ class SkipList {
   }
 
   // Inserts a new node with the given key and adjusts skip list height
-  auto insertNode(std::vector<std::shared_ptr<SkipNode>> &chain, const K &key) -> std::shared_ptr<SkipNode> {
+  auto InsertNode(std::vector<std::shared_ptr<SkipNode>> &chain, const K &key) -> std::shared_ptr<SkipNode> {
     auto node = chain[0]->links_[0];
     if (node && !compare_(node->key_, key) && !compare_(key, node->key_)) {
       // Key already exists in skip list
@@ -109,26 +110,26 @@ class SkipList {
     }
 
     // Create new node
-    auto newHeight = RandomHeight();
-    auto newNode = std::make_shared<SkipNode>(newHeight, key);
+    auto new_height = RandomHeight();
+    auto new_node = std::make_shared<SkipNode>(new_height, key);
 
     // Update new node pointers
-    for (size_t i = 0; i < newHeight && i < height_; i++) {
-      newNode->links_[i] = chain[i]->links_[i];
-      chain[i]->links_[i] = newNode;
+    for (size_t i = 0; i < new_height && i < height_; i++) {
+      new_node->links_[i] = chain[i]->links_[i];
+      chain[i]->links_[i] = new_node;
     }
 
     // Adjust height
-    while (height_ < newHeight) {
-      header_->links_[height_] = newNode;
+    while (height_ < new_height) {
+      header_->links_[height_] = new_node;
       height_++;
     }
     size_++;
-    return newNode;
+    return new_node;
   }
 
   // Adjust previous pointers given list of previous nodes, target node
-  void updatePrevs(std::vector<std::shared_ptr<SkipNode>> &chain, std::shared_ptr<SkipNode> &node) {
+  void UpdatePrevs(std::vector<std::shared_ptr<SkipNode>> &chain, std::shared_ptr<SkipNode> &node) {
     for (size_t i = 0; i < chain.size() && i < node->Height(); i++) {
       if (chain[i] == nullptr) {
         return;
@@ -163,7 +164,7 @@ class SkipList {
   std::mt19937 rng_{Seed};
 
   /** @brief A reader-writer latch protecting the skip list. */
-  std::shared_mutex rwlock_{};
+  std::shared_mutex rwlock_;
 };
 
 /**
@@ -178,7 +179,7 @@ SKIPLIST_TEMPLATE_ARGUMENTS struct SkipList<K, Compare, MaxHeight, Seed>::SkipNo
    * @param height The number of links the node will have
    * @param key The key to store in the node (default empty for header)
    */
-  explicit SkipNode(size_t height, K key = K{}) : links_(height, nullptr), key_{key} {}
+  explicit SkipNode(size_t height, K key = K{}) : links_(height, nullptr), key_{std::move(key)} {}
 
   auto Height() const -> size_t;
   auto Next(size_t level) const -> std::shared_ptr<SkipNode>;
