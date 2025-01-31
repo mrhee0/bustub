@@ -47,9 +47,9 @@ auto LRUKReplacer::Evict() -> std::optional<frame_id_t> {
   size_t earliest_timestamp = current_timestamp_;
   frame_id_t toBeEvicted;
   for (auto fid : evictables_) {
-    auto& node = node_store_.at(fid);
+    auto &node = node_store_.at(fid);
     if (max_distance < std::numeric_limits<size_t>::max() && node.history_size() == k_ &&
-      (current_timestamp_ - node.get_front()) > max_distance) {
+        (current_timestamp_ - node.get_front()) > max_distance) {
       toBeEvicted = fid;
       max_distance = current_timestamp_ - node.get_front();
     } else if (node.history_size() < k_ && node.get_front() <= earliest_timestamp) {

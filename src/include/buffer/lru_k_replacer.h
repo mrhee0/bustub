@@ -29,7 +29,7 @@ enum class AccessType { Unknown = 0, Lookup, Scan, Index };
 
 class LRUKNode {
  private:
-  std::list<size_t> history_ {};
+  std::list<size_t> history_{};
   frame_id_t fid_;
 
  public:
@@ -37,25 +37,15 @@ class LRUKNode {
 
   explicit LRUKNode(frame_id_t fid) : fid_(fid) {};
 
-  void set_fid(frame_id_t fid) {
-    fid_ = fid;
-  }
+  void set_fid(frame_id_t fid) { fid_ = fid; }
 
-  auto history_size() {
-    return history_.size();
-  }
+  auto history_size() { return history_.size(); }
 
-  void add_timestamp(size_t timestamp) {
-    history_.push_back(timestamp);
-  }
+  void add_timestamp(size_t timestamp) { history_.push_back(timestamp); }
 
-  void remove_oldest_timestamp() {
-    history_.pop_front();
-  }
+  void remove_oldest_timestamp() { history_.pop_front(); }
 
-  size_t get_front() {
-    return history_.front();
-  }
+  size_t get_front() { return history_.front(); }
 };
 
 /**
