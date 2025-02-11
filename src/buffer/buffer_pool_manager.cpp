@@ -44,6 +44,7 @@ void FrameHeader::Reset() {
   std::fill(data_.begin(), data_.end(), 0);
   pin_count_.store(0);
   is_dirty_ = false;
+  page_id_ = std::nullopt;
 }
 
 /**
@@ -123,8 +124,10 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  * @return The page ID of the newly allocated page.
  */
 auto BufferPoolManager::NewPage() -> page_id_t {
-  size_t new_page_id = next_page_id_++;
-  disk_scheduler_->NewPage(new_page_id);
+
+  auto new_page_id = next_page_id_.fetch_add(1);
+  DiskScheduler::IncreaseDiskSpace();
+  return next_page_id_-1;
 }
 
 /**
@@ -153,7 +156,12 @@ auto BufferPoolManager::NewPage() -> page_id_t {
  * @param page_id The page ID of the page we want to delete.
  * @return `false` if the page exists but could not be deleted, `true` if the page didn't exist or deletion succeeded.
  */
-auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
+  if (page_table_.find(page_id) == page_table_.end() || frames_[page_table_[page_id]]->pin_count_ > 0) {
+    return false;
+  }
+  UNIMPLEMENTED("TODO(P1): Add implementation.");
+}
 
 /**
  * @brief Acquires an optional write-locked guard over a page of data. The user can specify an `AccessType` if needed.
@@ -195,7 +203,36 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool { UNIMPLEMENTED("T
  * returns `std::nullopt`, otherwise returns a `WritePageGuard` ensuring exclusive and mutable access to a page's data.
  */
 auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_type) -> std::optional<WritePageGuard> {
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  if (page_table_.find(page_id) == page_table_.end()) {
+    frame_id_t frame_id;
+    if (free_frames_.empty()) {
+      auto evicted_frame = replacer_->Evict();
+      if (!evicted_frame.has_value()) {
+        return std::nullopt;
+      }
+      frame_id = evicted_frame.value();
+      auto frame = frames_[frame_id];
+      if (frame->is_dirty_) {
+        disk_scheduler_->Schedule(DiskRequest{true, frame->GetDataMut(), frame->page_id_.value(), {}});
+      }
+      if (frame->page_id_.has_value()) {
+        page_table_.erase(frame->page_id_.value());
+      }
+      frame->Reset();
+    } else {
+      frame_id = free_frames_.back();
+      free_frames_.pop_back();
+    }
+    page_table_[page_id] = frame_id;
+  }
+  auto frame = frames_[page_table_[page_id]];
+  frame->page_id_ = page_id;
+  frame->pin_count_++;
+  replacer_->RecordAccess(page_table_[page_id], access_type);
+  disk_scheduler_->Schedule(DiskRequest{true, frame->GetDataMut(), page_id, {}});
+  WritePageGuard write_guard = WritePageGuard(page_id, frame, replacer_, bpm_latch_);
+  return write_guard;
 }
 
 /**
@@ -223,7 +260,37 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
  * returns `std::nullopt`, otherwise returns a `ReadPageGuard` ensuring shared and read-only access to a page's data.
  */
 auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_type) -> std::optional<ReadPageGuard> {
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  if (page_table_.find(page_id) == page_table_.end()) {
+    frame_id_t frame_id;
+    if (free_frames_.empty()) {
+      auto evicted_frame = replacer_->Evict();
+      if (!evicted_frame.has_value()) {
+        return std::nullopt;
+      }
+      frame_id = evicted_frame.value();
+      auto frame = frames_[frame_id];
+      if (frame->is_dirty_) {
+        disk_scheduler_->Schedule(DiskRequest{true, frame->GetDataMut(), frame->page_id_.value(), {}});
+      }
+      if (frame->page_id_.has_value()) {
+        page_table_.erase(frame->page_id_.value());
+      }
+      frame->Reset();
+    } else {
+      frame_id = free_frames_.back();
+      free_frames_.pop_back();
+    }
+    page_table_[page_id] = frame_id;
+    auto frame = frames_[frame_id];
+    frame->page_id_ = page_id;
+    disk_scheduler_->Schedule(DiskRequest{false, frame->GetDataMut(), page_id, {}});
+  }
+  auto frame = frames_[page_table_[page_id]];
+  frame->pin_count_++;
+  replacer_->RecordAccess(page_table_[page_id], access_type);
+  ReadPageGuard read_guard = ReadPageGuard(page_id, frame, replacer_, bpm_latch_);
+  return read_guard;
 }
 
 /**
