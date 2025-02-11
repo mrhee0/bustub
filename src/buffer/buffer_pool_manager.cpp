@@ -113,15 +113,13 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  * You will maintain a thread-safe, monotonically increasing counter in the form of a `std::atomic<page_id_t>`.
  * See the documentation on [atomics](https://en.cppreference.com/w/cpp/atomic/atomic) for more information.
  *
- * TODO(P1): Add implementation.
  *
  * @return The page ID of the newly allocated page.
  */
 auto BufferPoolManager::NewPage() -> page_id_t {
-
+  std::scoped_lock<std::mutex> latch(*bpm_latch_);
   auto new_page_id = next_page_id_.fetch_add(1);
-  DiskScheduler::IncreaseDiskSpace();
-  return next_page_id_-1;
+  return new_page_id;
 }
 
 /**
@@ -145,16 +143,22 @@ auto BufferPoolManager::NewPage() -> page_id_t {
  * For (nonexistent) style points, you can still call `DeallocatePage` in case you want to implement something slightly
  * more space-efficient in the future.
  *
- * TODO(P1): Add implementation.
  *
  * @param page_id The page ID of the page we want to delete.
  * @return `false` if the page exists but could not be deleted, `true` if the page didn't exist or deletion succeeded.
  */
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
-  if (page_table_.find(page_id) == page_table_.end() || frames_[page_table_[page_id]]->pin_count_ > 0) {
+  std::scoped_lock<std::mutex> latch(*bpm_latch_);
+  auto it = page_table_.find(page_id);
+  if (it != page_table_.end() && frames_[page_table_[page_id]]->pin_count_ > 0) {
     return false;
+  } else if (it != page_table_.end()) {
+    frames_[page_table_[page_id]]->Reset();
+    free_frames_.push_back(page_table_[page_id]);
+    page_table_.erase(it);
+    disk_scheduler_->DeallocatePage(page_id);
   }
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  return true;
 }
 
 /**
@@ -189,7 +193,6 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
  *
  * These two functions are the crux of this project, so we won't give you more hints than this. Good luck!
  *
- * TODO(P1): Add implementation.
  *
  * @param page_id The ID of the page we want to write to.
  * @param access_type The type of page access.
@@ -197,8 +200,9 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
  * returns `std::nullopt`, otherwise returns a `WritePageGuard` ensuring exclusive and mutable access to a page's data.
  */
 auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_type) -> std::optional<WritePageGuard> {
-  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  std::scoped_lock<std::mutex> latch(*bpm_latch_);
   if (page_table_.find(page_id) == page_table_.end()) {
+    std::cout << page_id << " not in buffer pool" << std::endl;
     frame_id_t frame_id;
     if (free_frames_.empty()) {
       auto evicted_frame = replacer_->Evict();
@@ -216,17 +220,17 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
       frame->Reset();
     } else {
       frame_id = free_frames_.back();
+      std::cout << frame_id << " frame id" << std::endl;
       free_frames_.pop_back();
     }
-    page_table_[page_id] = frame_id;
+    page_table_.insert({page_id, frame_id});
   }
   auto frame = frames_[page_table_[page_id]];
-  frame->page_id_ = page_id;
-  frame->pin_count_++;
+  frame->Reset();
+  replacer_->SetEvictable(page_table_[page_id], false);
   replacer_->RecordAccess(page_table_[page_id], access_type);
   disk_scheduler_->Schedule(DiskRequest{true, frame->GetDataMut(), page_id, {}});
-  WritePageGuard write_guard = WritePageGuard(page_id, frame, replacer_, bpm_latch_);
-  return write_guard;
+  return WritePageGuard(page_id, std::shared_ptr(frame), std::shared_ptr(replacer_), std::shared_ptr(bpm_latch_), std::shared_ptr(disk_scheduler_));
 }
 
 /**
@@ -246,7 +250,6 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
  *
  * See the implementation details of `CheckedWritePage`.
  *
- * TODO(P1): Add implementation.
  *
  * @param page_id The ID of the page we want to read.
  * @param access_type The type of page access.
@@ -283,7 +286,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
   auto frame = frames_[page_table_[page_id]];
   frame->pin_count_++;
   replacer_->RecordAccess(page_table_[page_id], access_type);
-  ReadPageGuard read_guard = ReadPageGuard(page_id, frame, replacer_, bpm_latch_);
+  ReadPageGuard read_guard = ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   return read_guard;
 }
 
@@ -351,12 +354,21 @@ auto BufferPoolManager::ReadPage(page_id_t page_id, AccessType access_type) -> R
  * You should probably leave implementing this function until after you have completed `CheckedReadPage` and
  * `CheckedWritePage`, as it will likely be much easier to understand what to do.
  *
- * TODO(P1): Add implementation
  *
  * @param page_id The page ID of the page to be flushed.
  * @return `false` if the page could not be found in the page table, otherwise `true`.
  */
-auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
+  if (page_table_.find(page_id) == page_table_.end()) {
+    return false;
+  }
+  auto frame = frames_[page_table_[page_id]];
+  if (frame->is_dirty_) {
+    disk_scheduler_->Schedule(DiskRequest{true, frame->GetDataMut(),page_id,{}});
+    frame->is_dirty_ = false;
+  }
+  return true;
+}
 
 /**
  * @brief Flushes a page's data out to disk safely.
@@ -371,12 +383,14 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool { UNIMPLEMENT
  * You should probably leave implementing this function until after you have completed `CheckedReadPage`,
  * `CheckedWritePage`, and `Flush` in the page guards, as it will likely be much easier to understand what to do.
  *
- * TODO(P1): Add implementation
  *
  * @param page_id The page ID of the page to be flushed.
  * @return `false` if the page could not be found in the page table, otherwise `true`.
  */
-auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
+  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  return FlushPageUnsafe(page_id);
+}
 
 /**
  * @brief Flushes all page data that is in memory to disk unsafely.
@@ -389,9 +403,12 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool { UNIMPLEMENTED("TO
  * You should probably leave implementing this function until after you have completed `CheckedReadPage`,
  * `CheckedWritePage`, and `FlushPage`, as it will likely be much easier to understand what to do.
  *
- * TODO(P1): Add implementation
  */
-void BufferPoolManager::FlushAllPagesUnsafe() { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+void BufferPoolManager::FlushAllPagesUnsafe() {
+  for (const auto &[page_id, frame_id] : page_table_) {
+    FlushPageUnsafe(page_id);
+  }
+}
 
 /**
  * @brief Flushes all page data that is in memory to disk safely.
@@ -403,9 +420,11 @@ void BufferPoolManager::FlushAllPagesUnsafe() { UNIMPLEMENTED("TODO(P1): Add imp
  * You should probably leave implementing this function until after you have completed `CheckedReadPage`,
  * `CheckedWritePage`, and `FlushPage`, as it will likely be much easier to understand what to do.
  *
- * TODO(P1): Add implementation
  */
-void BufferPoolManager::FlushAllPages() { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+void BufferPoolManager::FlushAllPages() {
+  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  FlushAllPagesUnsafe();
+}
 
 /**
  * @brief Retrieves the pin count of a page. If the page does not exist in memory, return `std::nullopt`.
@@ -426,13 +445,16 @@ void BufferPoolManager::FlushAllPages() { UNIMPLEMENTED("TODO(P1): Add implement
  * Again, if you are unfamiliar with atomic types, see the official C++ docs
  * [here](https://en.cppreference.com/w/cpp/atomic/atomic).
  *
- * TODO(P1): Add implementation
  *
  * @param page_id The page ID of the page we want to get the pin count of.
  * @return std::optional<size_t> The pin count if the page exists, otherwise `std::nullopt`.
  */
 auto BufferPoolManager::GetPinCount(page_id_t page_id) -> std::optional<size_t> {
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  std::lock_guard<std::mutex> guard(*bpm_latch_);
+  if (page_table_.find(page_id) == page_table_.end()) {
+    return std::nullopt;
+  }
+  return frames_[page_table_[page_id]]->pin_count_.load();
 }
 
 }  // namespace bustub

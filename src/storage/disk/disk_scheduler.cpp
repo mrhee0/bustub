@@ -30,7 +30,6 @@ DiskScheduler::~DiskScheduler() {
 }
 
 /**
- * TODO(P1): Add implementation
  *
  * @brief Schedules a request for the DiskManager to execute.
  *
@@ -39,7 +38,6 @@ DiskScheduler::~DiskScheduler() {
 void DiskScheduler::Schedule(DiskRequest r) { request_queue_.Put(std::move(r)); }
 
 /**
- * TODO(P1): Add implementation
  *
  * @brief Background worker thread function that processes scheduled requests.
  *
